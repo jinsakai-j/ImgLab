@@ -25,6 +25,38 @@ Alat pengolah gambar offline berbasis GUI (Python + CustomTkinter). Tanpa login,
 pip install customtkinter Pillow
 ```
 
+## Instalasi dari GitHub
+
+Syarat: **Git** terpasang (Windows: [git-scm.com](https://git-scm.com/) | Linux: `sudo apt install git`).
+
+### Windows
+
+```bat
+git clone https://github.com/jinsakai-j/ImgLab.git
+cd ImgLab
+python -m pip install -r requirements.txt
+python ImgLab.py
+```
+
+> Ganti `python` dengan `py -3` bila perintah `python` tidak dikenali di CMD.
+> (Opsional) buat shortcut desktop tanpa CMD: `python create_shortcut.py`
+
+### Linux (Ubuntu / Debian)
+
+```bash
+sudo apt update
+sudo apt install -y git python3 python3-pip python3-tk
+git clone https://github.com/jinsakai-j/ImgLab.git
+cd ImgLab
+python3 -m pip install -r requirements.txt
+python3 ImgLab.py
+```
+
+> Catatan Linux:
+> - `create_shortcut.py` dan `Run_ImgLab.bat` khusus Windows — di Linux cukup jalankan `python3 ImgLab.py`.
+> - Fitur `Hapus Background` / `OCR` / `PDF → Gambar` di Linux: `python3 -m pip install rembg onnxruntime rapidocr_onnxruntime pymupdf` (lihat bagian di bawah).
+> - Shortcut F11 fullscreen dan resize tetap berfungsi normal di Linux.
+
 ### Fitur opsional
 
 ```bash
