@@ -8,6 +8,9 @@ Alat pengolah gambar offline berbasis GUI (Python + CustomTkinter). Tanpa login,
 - **OCR (Ekstrak Teks)** — ambil teks dari foto/scan/screenshot, hasil bisa disalin atau disimpan `.txt`
 - **Hapus Background** — AI (rembg) → PNG transparan
 - **Rename Massal** — pola `IMG_{n:03d}` dst., nomor mulai bebas
+- **Crop & Rotate** — potong area gambar dengan preview drag, putar 90°/180°, flip horizontal/vertikal (batch)
+- **PDF** — gabung banyak gambar jadi satu PDF (A4/Letter/A5) atau ubah PDF menjadi gambar per halaman (PNG/JPG)
+- **Upscale** — perbesar gambar 2-4× berkualitas (Lanczos), opsional ditambah penajaman
 - Proses batch, progress bar global tipis, nama file otomatis unik (tidak menimpa file lama)
 - Jendela bisa di-resize & fullscreen (F11)
 
@@ -27,6 +30,7 @@ pip install customtkinter Pillow
 ```bash
 pip install rembg onnxruntime            # Hapus Background (unduh model ~176 MB saat pertama dipakai)
 pip install rapidocr_onnxruntime         # OCR (model diunduh otomatis saat pertama dipakai)
+pip install pymupdf                      # PDF → Gambar (opsional, gambar→PDF sudah bawaan Pillow)
 ```
 
 ## Cara Pakai

@@ -9,7 +9,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
-from PIL import Image, ImageDraw, ImageFont, ImageTk
+from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageTk
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("green")
@@ -39,6 +39,9 @@ MODES = [
     ("OCR (Ekstrak Teks)", "Ambil teks dari gambar atau screenshot"),
     ("Hapus Background", "Hapus latar belakang dengan AI (rembg)"),
     ("Rename Massal", "Renama banyak file gambar sekaligus"),
+    ("Crop & Rotate", "Potong area gambar, putar, dan balik secara batch"),
+    ("PDF", "Gabung gambar jadi PDF atau ubah PDF jadi gambar"),
+    ("Upscale", "Perbesar gambar dengan kualitas tinggi"),
 ]
 
 
@@ -58,14 +61,22 @@ class ImgLabApp(ctk.CTk):
         self.title("ImgLab - Image Toolkit")
         self.configure(fg_color=COLOR_BG)
         self.resizable(True, True)
-        self.minsize(900, 660)
-        self.center_window(900, 670)
+        self.minsize(900, 700)
+        self.center_window(900, 780)
 
         self._busy = False
         self.cancel_requested = False
         self._conv_files = []
         self._ocr_files = []
         self._bg_files = []
+        self._crop_files = []
+        self._pdf_files = []
+        self._up_files = []
+        self._crop_rect = None
+        self._crop_angle = 0
+        self._crop_flip_h = False
+        self._crop_flip_v = False
+        self._preview_photo = None
 
         self._build_ui()
 
@@ -137,18 +148,23 @@ class ImgLabApp(ctk.CTk):
             panel.grid_columnconfigure(0, weight=1)
             panel.grid_rowconfigure(1, weight=1)
             panel.grid(row=0, column=0, sticky="nsew", padx=24, pady=20)
-            ctk.CTkLabel(panel, text=name,
+            hdr = ctk.CTkFrame(panel, fg_color="transparent")
+            hdr.grid(row=0, column=0, sticky="ew")
+            ctk.CTkLabel(hdr, text=name,
                          font=ctk.CTkFont(family="Segoe UI", size=16, weight="bold"),
                          text_color=COLOR_TEXT_MAIN, anchor="w").grid(row=0, column=0, sticky="w")
-            ctk.CTkLabel(panel, text=desc,
+            ctk.CTkLabel(hdr, text=desc,
                          font=ctk.CTkFont(family="Segoe UI", size=11),
-                         text_color=COLOR_TEXT_MUTED, anchor="w").grid(row=0, column=0, sticky="w", pady=(24, 0))
+                         text_color=COLOR_TEXT_MUTED, anchor="w").grid(row=1, column=0, sticky="w", pady=(2, 0))
             self.panels.append(panel)
 
         self._build_conv_panel(self.panels[0])
         self._build_ocr_panel(self.panels[1])
         self._build_bg_panel(self.panels[2])
         self._build_ren_panel(self.panels[3])
+        self._build_crop_panel(self.panels[4])
+        self._build_pdf_panel(self.panels[5])
+        self._build_up_panel(self.panels[6])
         for p in self.panels:
             p.grid_remove()
         self._show_panel(0)
@@ -194,9 +210,10 @@ class ImgLabApp(ctk.CTk):
                             border_width=1, border_color=COLOR_CARD_BORDER)
         return card
 
-    def _file_list_card(self, parent, var_holder, on_add, on_clear, hint="Daftar file kosong. Klik Pilih Gambar."):
+    def _file_list_card(self, parent, var_holder, on_add, on_clear,
+                        hint="Daftar file kosong. Klik Pilih Gambar.", box_height=None, grid_row=1):
         card = self._card(parent)
-        card.grid(row=1, column=0, sticky="nsew", pady=(30, 12))
+        card.grid(row=grid_row, column=0, sticky="nsew", pady=(18, 10))
         card.grid_columnconfigure(0, weight=1)
         card.grid_rowconfigure(1, weight=1)
 
@@ -217,7 +234,8 @@ class ImgLabApp(ctk.CTk):
         box = ctk.CTkTextbox(card, corner_radius=6, fg_color=COLOR_INPUT_BG,
                              border_width=1, border_color=COLOR_CARD_BORDER,
                              font=ctk.CTkFont(family="Consolas", size=10),
-                             text_color=COLOR_TEXT_MUTED, wrap="none")
+                             text_color=COLOR_TEXT_MUTED, wrap="none",
+                             height=box_height if box_height else 200)
         box.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 12))
         var_holder.append(box)
         return card
@@ -231,14 +249,16 @@ class ImgLabApp(ctk.CTk):
                          text_color=COLOR_TEXT_DIM, anchor="w").grid(row=row, column=2, sticky="w",
                                                                      padx=(14, 0), pady=4)
 
-    def _action_button(self, parent, text, command):
+    def _action_button(self, parent, text, command, grid_row=3):
         bar = ctk.CTkFrame(parent, fg_color="transparent")
-        bar.grid(row=3, column=0, sticky="ew", pady=(14, 0))
+        bar.grid(row=grid_row, column=0, sticky="ew", pady=(12, 0))
         bar.grid_columnconfigure(0, weight=1)
-        ctk.CTkButton(bar, text=text, height=38, corner_radius=8,
-                      fg_color=COLOR_ACCENT, hover_color=COLOR_ACCENT_HOVER, text_color="#FFFFFF",
-                      font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
-                      command=command).grid(row=0, column=0, sticky="ew")
+        btn = ctk.CTkButton(bar, text=text, height=38, corner_radius=8,
+                            fg_color=COLOR_ACCENT, hover_color=COLOR_ACCENT_HOVER, text_color="#FFFFFF",
+                            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
+                            command=command)
+        btn.grid(row=0, column=0, sticky="ew")
+        return btn
 
     # ---- Panel: Konversi & Resize ----
     def _build_conv_panel(self, parent):
@@ -307,20 +327,14 @@ class ImgLabApp(ctk.CTk):
 
 # ---- Panel: OCR (Ekstrak Teks) ----
     def _build_ocr_panel(self, parent):
-        hint = self._card(parent)
-        hint.grid(row=0, column=0, sticky="ew", pady=(30, 0))
-        ctk.CTkLabel(hint, text="OCR berjalan 100% lokal (RapidOCR/onnx). Cocok untuk foto, scan, dan screenshot. "
-                                "Hasil teks otomatis diurutkan sesuai posisi (kiri-ke-kanan, atas-ke-bawah).",
-                     anchor="w", font=ctk.CTkFont(family="Segoe UI", size=10), text_color=COLOR_TEXT_DIM,
-                     wraplength=620, justify="left").pack(anchor="w", padx=12, pady=8)
-
         self._file_list_card(parent, self._ocr_files,
-                             lambda: self._add_images("ocr"), lambda: self._clear_images("ocr"))
+                             lambda: self._add_images("ocr"), lambda: self._clear_images("ocr"),
+                             "Foto/scan/screenshot berisi teks. Butuh: pip install rapidocr_onnxruntime", box_height=120)
 
         self._action_button(parent, "Ekstrak Teks", self.start_ocr)
 
         result_card = self._card(parent)
-        result_card.grid(row=4, column=0, sticky="nsew", pady=(14, 0))
+        result_card.grid(row=4, column=0, sticky="nsew", pady=(12, 0))
         result_card.grid_columnconfigure(0, weight=1)
         result_card.grid_rowconfigure(1, weight=1)
         bar = ctk.CTkFrame(result_card, fg_color="transparent")
@@ -340,21 +354,15 @@ class ImgLabApp(ctk.CTk):
         self.ocr_result = ctk.CTkTextbox(result_card, corner_radius=6, fg_color=COLOR_INPUT_BG,
                                          border_width=1, border_color=COLOR_CARD_BORDER,
                                          font=ctk.CTkFont(family="Consolas", size=10),
-                                         text_color=COLOR_TEXT_MAIN, wrap="word")
+                                         text_color=COLOR_TEXT_MAIN, wrap="word", height=150, width=400)
         self.ocr_result.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 12))
         self.ocr_result.insert("end", "Hasil ekstraksi teks akan muncul di sini...")
 
     # ---- Panel: Hapus Background ----
     def _build_bg_panel(self, parent):
-        hint = self._card(parent)
-        hint.grid(row=0, column=0, sticky="ew", pady=(30, 0))
-        ctk.CTkLabel(hint, text="Menggunakan rembg (AI). Pertama kali dijalankan akan mengunduh model (~176 MB). "
-                                "Butuh:  pip install rembg onnxruntime", anchor="w",
-                     font=ctk.CTkFont(family="Segoe UI", size=10), text_color=COLOR_TEXT_DIM,
-                     wraplength=560, justify="left").pack(anchor="w", padx=12, pady=8)
-
         self._file_list_card(parent, self._bg_files,
-                             lambda: self._add_images("bg"), lambda: self._clear_images("bg"))
+                             lambda: self._add_images("bg"), lambda: self._clear_images("bg"),
+                             "Latar jelas = hasil lebih mantap. Butuh: pip install rembg onnxruntime")
 
         params = ctk.CTkFrame(parent, fg_color="transparent")
         params.grid(row=2, column=0, sticky="ew", pady=(8, 0))
@@ -382,7 +390,7 @@ class ImgLabApp(ctk.CTk):
     # ---- Panel: Rename Massal ----
     def _build_ren_panel(self, parent):
         card = self._card(parent)
-        card.grid(row=1, column=0, sticky="nsew", pady=(30, 12))
+        card.grid(row=1, column=0, sticky="nsew", pady=(18, 10))
         card.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(card, text="Pilih folder yang berisi gambar yang ingin direname.",
                      font=ctk.CTkFont(family="Segoe UI", size=10), text_color=COLOR_TEXT_DIM,
@@ -428,9 +436,296 @@ class ImgLabApp(ctk.CTk):
         self.ren_result.grid(row=4, column=0, sticky="nsew", pady=(10, 0))
         self.ren_result.insert("end", "Log rename muncul di sini...")
 
+    # ---- Panel: Crop & Rotate ----
+    def _build_crop_panel(self, parent):
+        self._file_list_card(parent, self._crop_files,
+                             lambda: self._add_crop_images(), lambda: self._clear_crop_files(),
+                             "Pilih 1+ gambar. Klik 'Muat Preview' lalu seret area untuk crop.", box_height=60)
+
+        params = ctk.CTkFrame(parent, fg_color="transparent")
+        params.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+        params.grid_columnconfigure(1, weight=1)
+        dir_row = ctk.CTkFrame(params, fg_color="transparent")
+        dir_row.grid(row=0, column=1, sticky="ew", padx=(18, 0), pady=4)
+        dir_row.grid_columnconfigure(0, weight=1)
+        self.crop_out = ctk.CTkEntry(dir_row, height=30, corner_radius=6, border_color=COLOR_CARD_BORDER,
+                                     fg_color=COLOR_INPUT_BG, text_color=COLOR_TEXT_MAIN,
+                                     font=ctk.CTkFont(family="Segoe UI", size=10))
+        self.crop_out.insert(0, os.path.join(os.path.expanduser("~"), "Downloads", "ImgLab_Crop"))
+        self.crop_out.grid(row=0, column=0, sticky="ew")
+        ctk.CTkButton(dir_row, text="...", width=30, height=30, corner_radius=6, fg_color=SURFACE,
+                      hover_color=SURFACE_HOVER, text_color=COLOR_TEXT_MAIN,
+                      command=lambda: self._pick_folder(self.crop_out)).grid(row=0, column=1, padx=(4, 0))
+        ctk.CTkButton(dir_row, text="Buka", width=46, height=30, corner_radius=6, fg_color=SURFACE,
+                      hover_color=SURFACE_HOVER, text_color=COLOR_TEXT_MAIN,
+                      font=ctk.CTkFont(family="Segoe UI", size=10),
+                      command=lambda: self._open_folder(self.crop_out.get())).grid(row=0, column=2, padx=(4, 0))
+        ctk.CTkLabel(params, text="Simpan ke:", font=ctk.CTkFont(family="Segoe UI", size=11),
+                     text_color=COLOR_TEXT_MAIN, anchor="w").grid(row=0, column=0, sticky="w", pady=4)
+
+        preview_card = self._card(parent)
+        preview_card.grid(row=3, column=0, sticky="ew", pady=(12, 0))
+        bar = ctk.CTkFrame(preview_card, fg_color="transparent")
+        bar.grid(row=0, column=0, sticky="ew", padx=12, pady=(8, 0))
+        bar.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(bar, text="Preview (seret area yang ingin dipotong)", font=ctk.CTkFont(
+            family="Segoe UI", size=11, weight="bold"), text_color=COLOR_TEXT_MAIN, anchor="w"
+        ).grid(row=0, column=0, sticky="w")
+        self.crop_status_v = ctk.CTkLabel(bar, text="Area: belum dipilih", font=ctk.CTkFont(
+            family="Segoe UI", size=10), text_color=COLOR_TEXT_DIM)
+        self.crop_status_v.grid(row=0, column=1, padx=(8, 0))
+        ctk.CTkButton(bar, text="Muat Preview", width=90, height=26, corner_radius=6, fg_color=SURFACE,
+                      hover_color=SURFACE_HOVER, text_color=COLOR_TEXT_MAIN,
+                      font=ctk.CTkFont(family="Segoe UI", size=10),
+                      command=self._show_crop_preview).grid(row=0, column=2)
+        ctk.CTkButton(bar, text="Bersih", width=60, height=26, corner_radius=6, fg_color=SURFACE,
+                      hover_color=SURFACE_HOVER, text_color=COLOR_TEXT_MAIN,
+                      font=ctk.CTkFont(family="Segoe UI", size=10),
+                      command=self._reset_crop_rect).grid(row=0, column=3, padx=(6, 0))
+
+        self.crop_canvas = tk.Canvas(preview_card, height=176, bg=COLOR_INPUT_BG, highlightthickness=1,
+                                     highlightbackground=COLOR_CARD_BORDER)
+        self.crop_canvas.grid(row=1, column=0, sticky="ew", padx=12, pady=(8, 12))
+        self.crop_canvas.bind("<ButtonPress-1>", self._crop_rect_start)
+        self.crop_canvas.bind("<B1-Motion>", self._crop_rect_drag)
+        self.crop_canvas.bind("<ButtonRelease-1>", self._crop_rect_end)
+
+        rot = ctk.CTkFrame(parent, fg_color="transparent")
+        rot.grid(row=4, column=0, sticky="ew", pady=(10, 0))
+        ctk.CTkLabel(rot, text="Rotate / Flip:", font=ctk.CTkFont(family="Segoe UI", size=11),
+                     text_color=COLOR_TEXT_MAIN).pack(side="left")
+        for text, cmd in [("⟲ 90°", "l"), ("⟳ 90°", "r"), ("180°", "180"),
+                          ("Flip H", "fh"), ("Flip V", "fv"), ("Reset", "rst")]:
+            ctk.CTkButton(rot, text=text, width=58, height=28, corner_radius=6, fg_color=SURFACE,
+                          hover_color=SURFACE_HOVER, text_color=COLOR_TEXT_MAIN,
+                          font=ctk.CTkFont(family="Segoe UI", size=10),
+                          command=lambda c=cmd: self._crop_transform(c)).pack(side="left", padx=(8, 0))
+
+        self._action_button(parent, "Terapkan (Crop + Putar)", self.start_crop, grid_row=5)
+
+    def _add_crop_images(self):
+        self._add_images("crop")
+
+    def _clear_crop_files(self):
+        self._clear_images("crop")
+        self.crop_canvas.delete("all")
+        self._crop_rect = None
+
+    def _show_crop_preview(self):
+        files = self._selected_files("crop")
+        if not files:
+            messagebox.showwarning("ImgLab", "Pilih minimal 1 gambar dulu.")
+            return
+        try:
+            img = Image.open(files[0])
+            img.load()
+            w = max(self.crop_canvas.winfo_width() or 0, 560)
+            img.thumbnail((w - 24, 166), Image.Resampling.LANCZOS)
+        except Exception as e:
+            messagebox.showerror("ImgLab", f"Preview gagal: {e}")
+            return
+        self._preview_photo = ImageTk.PhotoImage(img)
+        self._preview_img = img
+        self.crop_canvas.delete("all")
+        self.crop_canvas.img_w, self.crop_canvas.img_h = img.size
+        self.crop_canvas.create_image(0, 0, anchor="nw", image=self._preview_photo)
+        self._reset_crop_rect()
+
+    def _reset_crop_rect(self):
+        self._crop_rect = None
+        self.crop_canvas.delete("rect")
+        self.crop_status_v.configure(text="Area: belum dipilih")
+
+    def _crop_rect_start(self, ev):
+        self.crop_canvas.delete("rect")
+        self._drag_x0, self._drag_y0 = ev.x, ev.y
+
+    def _crop_rect_drag(self, ev):
+        self.crop_canvas.delete("rect")
+        self.crop_canvas.create_rectangle(self._drag_x0, self._drag_y0, ev.x, ev.y,
+                                          outline=COLOR_ACCENT, width=2, tags="rect")
+
+    def _crop_rect_end(self, ev):
+        x0, y0 = self._drag_x0, self._drag_y0
+        x1, y1 = ev.x, ev.y
+        if x1 < x0: x0, x1 = x1, x0
+        if y1 < y0: y0, y1 = y1, y0
+        iw = self.crop_canvas.img_w
+        ih = self.crop_canvas.img_h
+        if iw <= 0 or ih <= 0 or (x1 - x0) < 4 or (y1 - y0) < 4 or y1 > ih or x1 > iw:
+            self._reset_crop_rect()
+            return
+        self._crop_rect = (x0 / iw, y0 / ih, x1 / iw, y1 / ih)
+        self.crop_status_v.configure(
+            text=f"Area: {int(x0)}-{int(x1)} px × {int(y0)}-{int(y1)} px")
+
+    def _crop_transform(self, cmd):
+        if cmd == "l": self._crop_angle = (self._crop_angle + 90) % 360
+        elif cmd == "r": self._crop_angle = (self._crop_angle - 90) % 360
+        elif cmd == "180": self._crop_angle = (self._crop_angle + 180) % 360
+        elif cmd == "fh": self._crop_flip_h = not self._crop_flip_h
+        elif cmd == "fv": self._crop_flip_v = not self._crop_flip_v
+        elif cmd == "rst":
+            self._crop_angle = 0
+            self._crop_flip_h = self._crop_flip_v = False
+        self.set_status(f"Transform: putar {self._crop_angle}°, flipH={self._crop_flip_h}, flipV={self._crop_flip_v}",
+                        COLOR_TEXT_MUTED)
+
+    # ---- Panel: PDF ----
+    def _build_pdf_panel(self, parent):
+        self.pdf_mode = ctk.CTkSegmentedButton(parent, values=["Gambar → PDF", "PDF → Gambar"],
+                                               height=32, corner_radius=8, fg_color=COLOR_INPUT_BG,
+                                               selected_color=COLOR_ACCENT, selected_hover_color=COLOR_ACCENT_HOVER,
+                                               unselected_color=SURFACE, unselected_hover_color=SURFACE_HOVER,
+                                               text_color=COLOR_TEXT_MAIN, font=ctk.CTkFont(family="Segoe UI", size=11),
+                                               command=self._pdf_mode_change)
+        self.pdf_mode.set("Gambar → PDF")
+        row = ctk.CTkFrame(parent, fg_color="transparent")
+        row.grid(row=1, column=0, sticky="ew", pady=(14, 0))
+        self.pdf_mode.grid(row=0, column=0, sticky="w")
+
+        self._file_list_card(parent, self._pdf_files,
+                             lambda: self._add_pdf_files(), lambda: self._clear_pdf_files(),
+                             "Pilih file sesuai mode di atas.", box_height=50, grid_row=2)
+
+        params = ctk.CTkFrame(parent, fg_color="transparent")
+        params.grid(row=3, column=0, sticky="ew", pady=(8, 0))
+        params.grid_columnconfigure(1, weight=1)
+
+        self.pdf_label1 = ctk.CTkLabel(params, text="Ukuran halaman:", font=ctk.CTkFont(family="Segoe UI", size=11),
+                                       text_color=COLOR_TEXT_MAIN, anchor="w")
+        self.pdf_label1.grid(row=0, column=0, sticky="w", pady=4)
+        self.pdf_label2 = ctk.CTkLabel(params, text="Resolusi:", font=ctk.CTkFont(family="Segoe UI", size=11),
+                                       text_color=COLOR_TEXT_MAIN, anchor="w")
+        self.pdf_label2.grid(row=1, column=0, sticky="w", pady=4)
+
+        self.pdf_size = ctk.CTkOptionMenu(params, values=["Asli (ikuti gambar)", "A4", "Letter", "A5"],
+                                          width=180, height=30, corner_radius=6, fg_color=COLOR_INPUT_BG,
+                                          button_color=COLOR_CARD_BORDER, button_hover_color=SURFACE_HOVER,
+                                          font=ctk.CTkFont(family="Segoe UI", size=11))
+        self.pdf_size.set("A4")
+        self.pdf_size.grid(row=0, column=1, sticky="w", padx=(18, 0), pady=4)
+
+        self.pdf_imgfmt = ctk.CTkOptionMenu(params, values=["PNG", "JPG"], width=100, height=30,
+                                            corner_radius=6, fg_color=COLOR_INPUT_BG,
+                                            button_color=COLOR_CARD_BORDER, button_hover_color=SURFACE_HOVER,
+                                            font=ctk.CTkFont(family="Segoe UI", size=11))
+        self.pdf_imgfmt.set("PNG")
+        self.pdf_imgfmt.grid_remove()
+
+        self.pdf_dpi = ctk.CTkOptionMenu(params, values=["72 DPI (kecil)", "150 DPI", "300 DPI (cetak)"],
+                                         width=140, height=30, corner_radius=6, fg_color=COLOR_INPUT_BG,
+                                         button_color=COLOR_CARD_BORDER, button_hover_color=SURFACE_HOVER,
+                                         font=ctk.CTkFont(family="Segoe UI", size=11))
+        self.pdf_dpi.set("150 DPI")
+        self.pdf_dpi.grid_remove()
+
+        dir_row = ctk.CTkFrame(params, fg_color="transparent")
+        dir_row.grid(row=2, column=1, sticky="ew", padx=(18, 0), pady=4)
+        dir_row.grid_columnconfigure(0, weight=1)
+        self.pdf_out = ctk.CTkEntry(dir_row, height=32, corner_radius=6, border_color=COLOR_CARD_BORDER,
+                                    fg_color=COLOR_INPUT_BG, text_color=COLOR_TEXT_MAIN,
+                                    font=ctk.CTkFont(family="Segoe UI", size=10))
+        self.pdf_out.insert(0, os.path.join(os.path.expanduser("~"), "Downloads", "ImgLab_PDF"))
+        self.pdf_out.grid(row=0, column=0, sticky="ew")
+        ctk.CTkButton(dir_row, text="...", width=30, height=32, corner_radius=6, fg_color=SURFACE,
+                      hover_color=SURFACE_HOVER, text_color=COLOR_TEXT_MAIN,
+                      command=lambda: self._pick_folder(self.pdf_out)).grid(row=0, column=1, padx=(4, 0))
+        ctk.CTkButton(dir_row, text="Buka", width=46, height=32, corner_radius=6, fg_color=SURFACE,
+                      hover_color=SURFACE_HOVER, text_color=COLOR_TEXT_MAIN,
+                      font=ctk.CTkFont(family="Segoe UI", size=10),
+                      command=lambda: self._open_folder(self.pdf_out.get())).grid(row=0, column=2, padx=(4, 0))
+        ctk.CTkLabel(params, text="Simpan ke:", font=ctk.CTkFont(family="Segoe UI", size=11),
+                     text_color=COLOR_TEXT_MAIN, anchor="w").grid(row=2, column=0, sticky="w", pady=4)
+
+        self.pdf_action = self._action_button(parent, "Gabung Jadi PDF", self.start_pdf, grid_row=4)
+
+    def _pdf_mode_change(self, choice):
+        is_img2pdf = choice.startswith("Gambar")
+        self.pdf_label1.configure(text="Ukuran halaman:" if is_img2pdf else "Format gambar:")
+        self.pdf_size.grid_remove()
+        self.pdf_imgfmt.grid_remove()
+        self.pdf_dpi.grid_remove()
+        if is_img2pdf:
+            self.pdf_label2.grid_remove()
+            self.pdf_size.grid(row=0, column=1, sticky="w", padx=(18, 0), pady=4)
+        else:
+            self.pdf_label2.grid(row=1, column=0, sticky="w", pady=4)
+            self.pdf_imgfmt.grid(row=0, column=1, sticky="w", padx=(18, 0), pady=4)
+            self.pdf_dpi.grid(row=1, column=1, sticky="w", padx=(18, 0), pady=4)
+        self.pdf_action.configure(text="Gabung Jadi PDF" if is_img2pdf else "Ubah ke Gambar")
+        self._clear_pdf_files()
+        self.set_status("Mode diganti. Pilih file baru sesuai mode.", COLOR_TEXT_MUTED)
+
+    def _add_pdf_files(self):
+        img2pdf = self.pdf_mode.get().startswith("Gambar")
+        allowed = IMAGE_EXTS if img2pdf else (".pdf",)
+        files = filedialog.askopenfilenames(
+            title="Pilih file", filetypes=[("File cocok", "".join("*" + e for e in allowed)),
+                                          ("Semua File", "*.*")])
+        box = self._list_box("pdf")
+        for f in files:
+            if f.lower().endswith(allowed):
+                box.insert("end", f)
+        box.see("end")
+
+    def _clear_pdf_files(self):
+        box = self._list_box("pdf")
+        if box:
+            box.delete("1.0", "end")
+
+    # ---- Panel: Upscale ----
+    def _build_up_panel(self, parent):
+        self._file_list_card(parent, self._up_files,
+                             lambda: self._add_images("up"), lambda: self._clear_images("up"),
+                             "Perbesar gambar 2-4×, offline dengan Lanczos.", box_height=110)
+
+        params = ctk.CTkFrame(parent, fg_color="transparent")
+        params.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+        params.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(params, text="Skala:", font=ctk.CTkFont(family="Segoe UI", size=11),
+                     text_color=COLOR_TEXT_MAIN, anchor="w").grid(row=0, column=0, sticky="w", pady=4)
+        self.up_scale = ctk.CTkOptionMenu(params, values=["2x", "3x", "4x"], width=100, height=30,
+                                          corner_radius=6, fg_color=COLOR_INPUT_BG,
+                                          button_color=COLOR_CARD_BORDER, button_hover_color=SURFACE_HOVER,
+                                          font=ctk.CTkFont(family="Segoe UI", size=11))
+        self.up_scale.set("2x")
+        self.up_scale.grid(row=0, column=1, sticky="w", padx=(18, 0), pady=4)
+
+        ctk.CTkLabel(params, text="Metode:", font=ctk.CTkFont(family="Segoe UI", size=11),
+                     text_color=COLOR_TEXT_MAIN, anchor="w").grid(row=1, column=0, sticky="w", pady=4)
+        self.up_method = ctk.CTkOptionMenu(params,
+                                           values=["Lanczos (halus)", "Lanczos + Tajam"], width=160, height=30,
+                                           corner_radius=6, fg_color=COLOR_INPUT_BG,
+                                           button_color=COLOR_CARD_BORDER, button_hover_color=SURFACE_HOVER,
+                                           font=ctk.CTkFont(family="Segoe UI", size=11))
+        self.up_method.set("Lanczos + Tajam")
+        self.up_method.grid(row=1, column=1, sticky="w", padx=(18, 0), pady=4)
+
+        dir_row = ctk.CTkFrame(params, fg_color="transparent")
+        dir_row.grid(row=2, column=1, sticky="ew", padx=(18, 0), pady=4)
+        dir_row.grid_columnconfigure(0, weight=1)
+        self.up_out = ctk.CTkEntry(dir_row, height=32, corner_radius=6, border_color=COLOR_CARD_BORDER,
+                                   fg_color=COLOR_INPUT_BG, text_color=COLOR_TEXT_MAIN,
+                                   font=ctk.CTkFont(family="Segoe UI", size=10))
+        self.up_out.insert(0, os.path.join(os.path.expanduser("~"), "Downloads", "ImgLab_Upscale"))
+        self.up_out.grid(row=0, column=0, sticky="ew")
+        ctk.CTkButton(dir_row, text="...", width=30, height=32, corner_radius=6, fg_color=SURFACE,
+                      hover_color=SURFACE_HOVER, text_color=COLOR_TEXT_MAIN,
+                      command=lambda: self._pick_folder(self.up_out)).grid(row=0, column=1, padx=(4, 0))
+        ctk.CTkButton(dir_row, text="Buka", width=46, height=32, corner_radius=6, fg_color=SURFACE,
+                      hover_color=SURFACE_HOVER, text_color=COLOR_TEXT_MAIN,
+                      font=ctk.CTkFont(family="Segoe UI", size=10),
+                      command=lambda: self._open_folder(self.up_out.get())).grid(row=0, column=2, padx=(4, 0))
+        ctk.CTkLabel(params, text="Simpan ke:", font=ctk.CTkFont(family="Segoe UI", size=11),
+                     text_color=COLOR_TEXT_MAIN, anchor="w").grid(row=2, column=0, sticky="w", pady=4)
+
+        self._action_button(parent, "Perbesar Gambar", self.start_upscale)
+
     # ---------------------------------------------------------------- helpers
     def _list_box(self, key):
-        widgets = self._conv_files if key == "conv" else (self._ocr_files if key == "ocr" else self._bg_files)
+        widgets = {"conv": self._conv_files, "ocr": self._ocr_files, "bg": self._bg_files,
+                   "crop": self._crop_files, "pdf": self._pdf_files, "up": self._up_files}.get(key, [])
         return widgets[0] if widgets else None
 
     def _add_images(self, key):
@@ -778,6 +1073,181 @@ class ImgLabApp(ctk.CTk):
         self.set_status(f"Rename selesai: {len(renamed)} file.", COLOR_SUCCESS)
 
     # ---------------------------------------------------------------- job runner
+    # ---------------------------------------------------------------- crop & rotate
+    def start_crop(self):
+        files = self._selected_files("crop")
+        if not files:
+            messagebox.showwarning("ImgLab", "Pilih minimal 1 gambar dulu.")
+            return
+        self._run_job(lambda: self._crop_worker(files))
+
+    def _crop_worker(self, files):
+        rect = self._crop_rect
+        angle = self._crop_angle
+        flip_h = self._crop_flip_h
+        flip_v = self._crop_flip_v
+        out_dir = self._ensure_dir(self.crop_out.get().strip())
+        done = 0
+        ok = 0
+        for f in files:
+            if self.cancel_requested:
+                raise _Cancelled()
+            try:
+                img = Image.open(f)
+                img.load()
+                if rect:
+                    x0, y0, x1, y1 = rect
+                    img = img.crop((int(x0 * img.width), int(y0 * img.height),
+                                    int(x1 * img.width), int(y1 * img.height)))
+                if flip_h:
+                    img = img.transpose(Image.FLIP_LEFT_RIGHT)
+                if flip_v:
+                    img = img.transpose(Image.FLIP_TOP_BOTTOM)
+                if angle:
+                    img = img.rotate(angle, expand=True, resample=Image.Resampling.BICUBIC)
+                base_name = os.path.splitext(os.path.basename(f))[0]
+                out_path = self._unique_path(os.path.join(out_dir, base_name), ".png")
+                img.convert("RGBA").save(out_path, "PNG")
+                ok += 1
+            except Exception:
+                pass
+            done += 1
+            self.after(0, lambda p=done / len(files): (self._show_progress(p),
+                                                       self.set_status(f"Crop & Rotate {done}/{len(files)}", COLOR_ACCENT)))
+        self.after(0, lambda: self.job_finish(files, out_dir, ok))
+
+    # ---------------------------------------------------------------- PDF
+    def start_pdf(self):
+        files = self._selected_files("pdf")
+        if not files:
+            messagebox.showwarning("ImgLab", "Pilih file dulu (sesuai mode).")
+            return
+        self._run_job(lambda: self._pdf_worker(files))
+
+    @staticmethod
+    def _pdf_page_size(choice):
+        return {"A4": (1240, 1754), "Letter": (1275, 1650), "A5": (874, 1240)}.get(choice, None)
+
+    def _pdf_worker(self, files):
+        img2pdf = self.pdf_mode.get().startswith("Gambar")
+        out_dir = self._ensure_dir(self.pdf_out.get().strip())
+        done = 0
+        ok = 0
+        if img2pdf:
+            size_choice = self.pdf_size.get()
+            page = self._pdf_page_size(size_choice)
+            images = []
+            for f in files:
+                if self.cancel_requested:
+                    raise _Cancelled()
+                try:
+                    im = Image.open(f).convert("RGB")
+                    if page:
+                        pw, ph = page
+                        scale = min(pw / im.width, ph / im.height, 1.0)
+                        if scale < 1.0:
+                            im = im.resize((max(1, int(im.width * scale)), max(1, int(im.height * scale))),
+                                           Image.Resampling.LANCZOS)
+                        canvas = Image.new("RGB", page, "white")
+                        canvas.paste(im, ((pw - im.width) // 2, (ph - im.height) // 2))
+                        im = canvas
+                    images.append(im)
+                except Exception:
+                    pass
+                done += 1
+                self.after(0, lambda p=done / len(files): (self._show_progress(p),
+                                                           self.set_status(f"Menyiapkan gambar {done}/{len(files)}", COLOR_ACCENT)))
+            if images:
+                name = os.path.splitext(os.path.basename(files[0]))[0]
+                out_path = self._unique_path(os.path.join(out_dir, name + "_gabungan"), ".pdf")
+                first, rest = images[0], images[1:]
+                first.save(out_path, "PDF", save_all=True, append_images=rest, resolution=150)
+                ok = 1
+            self.after(0, lambda: self._pdf_done(img2pdf, out_dir, ok, len(files)))
+        else:
+            dpi = int(re.search(r"\d+", self.pdf_dpi.get()).group())
+            fmt = self.pdf_imgfmt.get()
+            zoom = dpi / 72.0
+            try:
+                import fitz
+            except ImportError:
+                self.after(0, lambda: messagebox.showerror(
+                    "ImgLab", "Butuh PyMuPDF untuk PDF → Gambar.\n\npip install pymupdf"))
+                raise _Cancelled()
+            for f in files:
+                if self.cancel_requested:
+                    raise _Cancelled()
+                try:
+                    base_name = os.path.splitext(os.path.basename(f))[0]
+                    doc = fitz.open(f)
+                    for pno in range(len(doc)):
+                        if self.cancel_requested:
+                            raise _Cancelled()
+                        page = doc.load_page(pno)
+                        pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom))
+                        ext = ".png" if fmt == "PNG" else ".jpg"
+                        out_path = self._unique_path(os.path.join(out_dir, f"{base_name}_p{pno+1:03d}"), ext)
+                        if fmt == "PNG":
+                            pix.save(out_path)
+                        else:
+                            Image.frombytes("RGB", (pix.width, pix.height), pix.samples).save(out_path, "JPEG", quality=92)
+                        done += 1
+                        self.after(0, lambda p=min(done / (len(files) * max(len(doc), 1)), 1.0): (
+                            self._show_progress(p), self.set_status(f"PDF {base_name} halaman {pno+1}/{len(doc)}", COLOR_ACCENT)))
+                    doc.close()
+                    ok += 1
+                except Exception:
+                    pass
+            self.after(0, lambda: self._pdf_done(img2pdf, out_dir, ok, len(files)))
+
+    def _pdf_done(self, img2pdf, out_dir, ok, n):
+        self._busy = False
+        self._show_progress(0, False)
+        self.set_status(f"PDF: {ok} berhasil dari {n} file → {out_dir}", COLOR_SUCCESS if ok == n else "#D29922")
+        if ok:
+            self.after(50, lambda: messagebox.askyesno("ImgLab", "Hasil PDF selesai.\n\nBuka folder hasil?") and os.startfile(out_dir))
+
+    # ---------------------------------------------------------------- upscale
+    def start_upscale(self):
+        files = self._selected_files("up")
+        if not files:
+            messagebox.showwarning("ImgLab", "Pilih minimal 1 gambar dulu.")
+            return
+        self._run_job(lambda: self._up_worker(files))
+
+    def _up_worker(self, files):
+        factor = int(re.sub(r"\D", "", self.up_scale.get()) or 2)
+        method = self.up_method.get()
+        out_dir = self._ensure_dir(self.up_out.get().strip())
+        done = 0
+        ok = 0
+        for f in files:
+            if self.cancel_requested:
+                raise _Cancelled()
+            try:
+                img = Image.open(f)
+                img.load()
+                img = img.convert("RGB")
+                img = img.resize((img.width * factor, img.height * factor), Image.Resampling.LANCZOS)
+                if "Tajam" in method:
+                    img = img.filter(ImageFilter.UnsharpMask(radius=2, percent=120))
+                ext = os.path.splitext(f)[1].lower()
+                if ext not in (".png", ".jpg", ".jpeg", ".webp", ".bmp"):
+                    ext = ".png"
+                base = os.path.splitext(os.path.basename(f))[0]
+                out_path = self._unique_path(os.path.join(out_dir, f"{base}_{factor}x"), ext)
+                if ext in (".jpg", ".jpeg"):
+                    img.save(out_path, "JPEG", quality=95)
+                else:
+                    img.save(out_path)
+                ok += 1
+            except Exception:
+                pass
+            done += 1
+            self.after(0, lambda p=done / len(files): (self._show_progress(p),
+                                                       self.set_status(f"Upscale {done}/{len(files)}", COLOR_ACCENT)))
+        self.after(0, lambda: self.job_finish(files, out_dir, ok))
+
     def _run_job(self, fn):
         if self._busy:
             return
