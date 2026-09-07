@@ -1,0 +1,8 @@
+customtkinter
+Pillow
+
+# Fitur "Hapus Background" (unduh model ~176 MB saat pertama dipakai):
+# pip install rembg onnxruntime
+
+# Fitur "OCR (Ekstrak Teks)" (model diunduh otomatis saat pertama dipakai):
+# pip install rapidocr_onnxruntime
